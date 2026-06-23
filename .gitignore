@@ -1,0 +1,21 @@
+Ignore Node Dependencies
+
+node_modules/
+
+Ignore actual uploaded files (we don't want to upload personal files to GitHub!)
+
+backend/uploads/
+
+Environment variables (for later when we add database passwords)
+
+.env
+
+Build outputs
+
+dist/
+build/
+
+OS generated files
+
+.DS_Store
+Thumbs.db
