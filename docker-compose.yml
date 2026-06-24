@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: datastorage-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: datastorage
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  backend:
+    build: ./backend
+    container_name: datastorage-backend
+    ports:
+      - "3001:3001"
+    environment:
+      # These tell the backend how to connect to the 'db' container above
+      - DB_HOST=db
+      - DB_USER=postgres
+      - DB_PASSWORD=admin
+      - DB_NAME=datastorage
+    volumes:
+      # This saves your physical uploads safely to your CachyOS hard drive
+      - ./backend/uploads:/app/uploads
+    depends_on:
+      - db
+
+  frontend:
+    build: ./frontend
+    container_name: datastorage-frontend
+    ports:
+      - "5174:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

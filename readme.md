@@ -1,13 +1,40 @@
-NovaDrive - Self-Hosted Cloud Storage & Media Server
+DataStorage (Self-Hosted Cloud)
 
-A combination of Google Drive and Jellyfin, built from scratch.
+A modern, high-performance, self-hosted cloud storage solution built with React, Node.js, and PostgreSQL. It abstracts physical file paths using a relational database to provide infinite virtual folder nesting, instant metadata lookups, and robust file management.
 
-Phase 1: Data Backup
+Architecture
 
-Currently implementing a Node.js backend with a React (Vite) frontend for local file storage and chunked uploads.
+Frontend: React (Vite) + Tailwind CSS
 
-Folder Structure
+Backend: Node.js (Express) + Multer
 
-/backend: Node.js Express server handling file I/O and Multer uploads.
+Database: PostgreSQL
 
-/frontend: React application using Tailwind CSS for a modern, minimal UI.
+Deployment: Fully Dockerized
+
+Prerequisites
+
+Docker and Docker Compose installed on the host machine.
+
+Quick Start (Docker)
+
+Clone the repository:
+
+git clone [https://github.com/abhiram086/DataStorage.git](https://github.com/abhiram086/DataStorage.git)
+cd DataStorage
+
+
+Start the application using Docker Compose:
+
+docker compose up -d --build
+
+
+Access the application:
+
+Frontend UI: Open http://<YOUR_DEVICE_IP>:5174 in any browser.
+
+Backend API: Runs internally on port 3001.
+
+Storage Handling
+
+Physical files are saved into a flat, sanitized structure in ./backend/uploads. The visual folder hierarchy and metadata are entirely maintained by the PostgreSQL database. Do not manually manipulate files inside the uploads directory.

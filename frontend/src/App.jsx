@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UploadCloud, File as FileIcon, Folder, HardDrive, Download, Trash2, Clock, FolderPlus, ChevronRight, ChevronDown, MoreVertical, X, Edit2, Zap } from 'lucide-react';
-
+// Add this right under your imports
+const API_BASE = `http://${window.location.hostname}:3001`;
 // --- SUB-COMPONENT: Recursive Folder Tree ---
 const FolderTreeItem = ({ item, currentPath, setCurrentPath }) => {
   const isSelected = currentPath === item.path;
@@ -79,14 +80,14 @@ export default function App() {
 
   const fetchFiles = async () => {
     try {
-      const response = await fetch(`http://localhost:3001/api/files?path=${encodeURIComponent(currentPath)}`);
+      const response = await fetch(`${API_BASE}/api/files?path=${encodeURIComponent(currentPath)}`);
       if (response.ok) setFiles(await response.json());
     } catch (error) { console.error("Failed to fetch files", error); }
   };
 
   const fetchTree = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/tree');
+      const response = await fetch('${API_BASE}/api/tree');
       if (response.ok) {
         const data = await response.json();
         setTree(data[0]?.children || []);
@@ -96,7 +97,7 @@ export default function App() {
 
   const fetchRecent = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/recent');
+      const response = await fetch('${API_BASE}/api/recent');
       if (response.ok) setRecentFiles(await response.json());
     } catch (error) { console.error("Failed to fetch recent files", error); }
   };
@@ -106,7 +107,7 @@ export default function App() {
     if (!newFolderName.trim()) return;
 
     try {
-      const response = await fetch('http://localhost:3001/api/folder', {
+      const response = await fetch('${API_BASE}/api/folder', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ currentPath, folderName: newFolderName.trim() })
@@ -126,7 +127,7 @@ export default function App() {
   const handleDelete = async (targetPath) => {
     if (!window.confirm("Are you sure you want to delete this?")) return;
     try {
-      await fetch('http://localhost:3001/api/delete', {
+      await fetch('${API_BASE}/api/delete', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: targetPath })
@@ -141,18 +142,17 @@ export default function App() {
   };
 
   const handleDownload = (targetPath) => {
-    window.open(`http://localhost:3001/api/download?path=${encodeURIComponent(targetPath)}`, '_blank');
+    window.open(`${API_BASE}/api/download?path=${encodeURIComponent(targetPath)}`, '_blank');
   };
 
   const handleUpload = async (file) => {
     setIsUploading(true);
     const formData = new FormData();
-    // CRITICAL FIX: The path MUST be appended to formData BEFORE the file!
     formData.append('path', currentPath); 
     formData.append('file', file);
 
     try {
-      const response = await fetch('http://localhost:3001/api/upload', {
+      const response = await fetch('${API_BASE}/api/upload', {
         method: 'POST',
         body: formData,
       });
@@ -261,20 +261,36 @@ export default function App() {
         </div>
       )}
 
-      {/* 1. LEFT SIDEBAR */}
-      <aside className="w-64 bg-neutral-950 border-r border-neutral-800 p-6 flex flex-col gap-8 flex-shrink-0 hidden lg:flex">
-        <div className="flex items-center gap-3 text-xl font-semibold tracking-tight text-white cursor-pointer" onClick={() => setCurrentPath('')}>
-          <HardDrive className="text-blue-500" />
-          <span>DataStorage</span>
+      {/* 1. UNIFIED LEFT SIDEBAR */}
+      <aside className="w-72 bg-neutral-950 border-r border-neutral-800 flex flex-col flex-shrink-0 hidden lg:flex h-full">
+        <div className="p-6 pb-4">
+          <div className="flex items-center gap-3 text-xl font-semibold tracking-tight text-white cursor-pointer mb-8" onClick={() => setCurrentPath('')}>
+            <HardDrive className="text-blue-500" />
+            <span>DataStorage</span>
+          </div>
+          <nav className="flex flex-col gap-2">
+            <button onClick={() => setCurrentPath('')} className={`flex items-center gap-3 px-4 py-2.5 rounded-lg font-medium transition-colors ${currentPath === '' ? 'bg-blue-500/10 text-blue-400' : 'text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200'}`}>
+              <Folder size={18} /> My Drive
+            </button>
+            <button className="flex items-center gap-3 px-4 py-2.5 text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200 rounded-lg font-medium transition-colors">
+              <Clock size={18} /> Recent
+            </button>
+          </nav>
         </div>
-        <nav className="flex flex-col gap-2">
-          <button onClick={() => setCurrentPath('')} className={`flex items-center gap-3 px-4 py-2.5 rounded-lg font-medium transition-colors ${currentPath === '' ? 'bg-blue-500/10 text-blue-400' : 'text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200'}`}>
-            <Folder size={18} /> My Drive
-          </button>
-          <button className="flex items-center gap-3 px-4 py-2.5 text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200 rounded-lg font-medium transition-colors">
-            <Clock size={18} /> Recent
-          </button>
-        </nav>
+        
+        {/* Integrated Folder Tree */}
+        <div className="flex-1 overflow-y-auto px-4 pb-6 custom-scrollbar">
+          <div className="h-px bg-neutral-800 my-4 mx-2"></div>
+          <h3 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider mb-3 px-2">Folders</h3>
+          
+          <div className="px-1">
+            {tree.length === 0 ? (
+              <div className="text-xs text-neutral-600 px-2 mt-2">No folders yet.</div>
+            ) : (
+              tree.map(node => <FolderTreeItem key={node.path} item={node} currentPath={currentPath} setCurrentPath={setCurrentPath} />)
+            )}
+          </div>
+        </div>
       </aside>
 
       {/* 2. CENTER (Main Content) */}
@@ -406,21 +422,6 @@ export default function App() {
           )}
         </div>
       </main>
-
-      {/* 3. RIGHT SIDEBAR (Folder Tree) */}
-      <aside className="w-72 bg-neutral-950 border-l border-neutral-800 flex flex-col flex-shrink-0 hidden md:flex">
-        <div className="h-16 flex items-center px-6 border-b border-neutral-800 font-medium text-sm text-neutral-300 tracking-wide">
-          My Folders
-        </div>
-        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-          {tree.length === 0 ? (
-            <div className="text-xs text-neutral-600 text-center mt-10">No folders yet.</div>
-          ) : (
-            tree.map(node => <FolderTreeItem key={node.path} item={node} currentPath={currentPath} setCurrentPath={setCurrentPath} />)
-          )}
-        </div>
-      </aside>
-
     </div>
   );
 }

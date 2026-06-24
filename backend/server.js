@@ -1,202 +1,211 @@
-// IMPORTING MODULES
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
+const { pool, initDB } = require('./db');
 
 const app = express();
 const PORT = 3001;
 
-// MIDDLEWARE SETUP
 app.use(cors());
 app.use(express.json());
 
-// DIRECTORY SETUP
+// 🚦 NEW: GLOBAL TRAFFIC LOGGER
+// This will intercept EVERY request and print it, so we know if React is actually sending it!
+app.use((req, res, next) => {
+    console.log(`➡️  [${req.method}] ${req.url}`);
+    next();
+});
+
+initDB();
+
 const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir);
-}
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
-// --- SECURITY HELPER ---
-const getSafePath = (targetPath) => {
-    const safePath = path.normalize(path.join(uploadDir, targetPath || ''));
-    if (!safePath.startsWith(uploadDir)) {
-        throw new Error('Invalid path traversal detected');
-    }
-    return safePath;
-};
-
-// MULTER CONFIGURATION
 const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        try {
-            // Because React now sends 'path' BEFORE 'file', req.body.path works perfectly!
-            const folderPath = getSafePath(req.body.path || '');
-            cb(null, folderPath);
-        } catch (err) {
-            cb(err);
-        }
-    },
-    filename: function (req, file, cb) {
+    destination: (req, file, cb) => cb(null, uploadDir),
+    filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, uniqueSuffix + '-' + file.originalname);
+        cb(null, uniqueSuffix + '-' + file.originalname); 
     }
 });
 const upload = multer({ storage: storage });
 
 // 1. UPLOAD ENDPOINT
-app.post('/api/upload', upload.single('file'), (req, res) => {
+app.post('/api/upload', upload.single('file'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    res.json({ message: 'File uploaded successfully!' });
+    
+    try {
+        const folderPath = req.body.path || '';
+        console.log(`📥 [UPLOAD] Saving '${req.file.originalname}' into virtual folder: '${folderPath || 'Home'}'`);
+        
+        await pool.query(
+            `INSERT INTO files (name, physical_name, folder_path, size, is_directory) 
+             VALUES ($1, $2, $3, $4, false)`,
+            [req.file.originalname, req.file.filename, folderPath, req.file.size]
+        );
+        res.json({ message: 'File uploaded successfully!' });
+    } catch (err) {
+        console.error("❌ [UPLOAD ERROR]", err);
+        res.status(500).json({ error: 'Database insert failed' });
+    }
 });
 
-// 2. LIST FILES & FOLDERS (For the Center View)
-app.get('/api/files', (req, res) => {
+// 2. LIST FILES & FOLDERS
+app.get('/api/files', async (req, res) => {
     try {
         const currentPath = req.query.path || '';
-        const targetDir = getSafePath(currentPath);
-
-        if (!fs.existsSync(targetDir)) return res.json([]);
-
-        fs.readdir(targetDir, (err, files) => {
-            if (err) return res.status(500).json({ error: 'Unable to scan directory' });
-
-            const fileData = files.map(filename => {
-                const stats = fs.statSync(path.join(targetDir, filename));
-                return {
-                    name: filename,
-                    size: stats.isDirectory() ? 0 : stats.size,
-                    date: stats.mtime,
-                    isDirectory: stats.isDirectory(),
-                    path: path.posix.join(currentPath, filename)
-                };
-            });
-
-            fileData.sort((a, b) => {
-                if (a.isDirectory === b.isDirectory) return b.date - a.date;
-                return a.isDirectory ? -1 : 1;
-            });
-            res.json(fileData);
-        });
-    } catch (error) {
-        res.status(400).json({ error: 'Invalid path' });
-    }
-});
-
-// 3. GET FULL FOLDER TREE (For the Right Sidebar)
-app.get('/api/tree', (req, res) => {
-    const getDirectoryTree = (dir, basePath = '') => {
-        if (!fs.existsSync(dir)) return [];
-        const items = fs.readdirSync(dir);
-        let tree = [];
         
-        items.forEach(item => {
-            const fullPath = path.join(dir, item);
-            const relativePath = path.posix.join(basePath, item);
-            if (fs.statSync(fullPath).isDirectory()) {
-                tree.push({
-                    name: item,
-                    path: relativePath,
-                    children: getDirectoryTree(fullPath, relativePath)
-                });
-            }
-        });
-        return tree;
-    };
+        const result = await pool.query(
+            `SELECT * FROM files WHERE folder_path = $1 AND in_trash = false`,
+            [currentPath]
+        );
 
-    try {
-        res.json([{ name: 'Home', path: '', children: getDirectoryTree(uploadDir) }]);
+        const fileData = result.rows.map(row => ({
+            id: row.id,
+            name: row.name,
+            size: parseInt(row.size),
+            date: row.created_at,
+            isDirectory: row.is_directory,
+            path: currentPath === '' ? row.name : `${currentPath}/${row.name}`
+        }));
+
+        fileData.sort((a, b) => {
+            if (a.isDirectory === b.isDirectory) return new Date(b.date) - new Date(a.date);
+            return a.isDirectory ? -1 : 1;
+        });
+
+        res.json(fileData);
     } catch (error) {
-        res.status(500).json({ error: 'Failed to generate tree' });
+        console.error("❌ [FETCH ERROR]", error);
+        res.status(500).json({ error: 'Database query failed' });
     }
 });
 
-// 4. CREATE NEW FOLDER
-app.post('/api/folder', (req, res) => {
+// 3. GET FULL FOLDER TREE
+app.get('/api/tree', async (req, res) => {
+    try {
+        const result = await pool.query(`SELECT * FROM files WHERE is_directory = true AND in_trash = false`);
+        const allFolders = result.rows;
+
+        const buildTree = (folderPath) => {
+            return allFolders
+                .filter(f => f.folder_path === folderPath)
+                .map(f => {
+                    const thisPath = folderPath === '' ? f.name : `${folderPath}/${f.name}`;
+                    return {
+                        name: f.name,
+                        path: thisPath,
+                        children: buildTree(thisPath)
+                    };
+                });
+        };
+
+        res.json([{ name: 'Home', path: '', children: buildTree('') }]);
+    } catch (error) {
+        console.error("❌ [TREE ERROR]", error);
+        res.status(500).json({ error: 'Tree generation failed' });
+    }
+});
+
+// 4. CREATE NEW VIRTUAL FOLDER
+app.post('/api/folder', async (req, res) => {
     try {
         const { currentPath, folderName } = req.body;
         if (!folderName) return res.status(400).json({ error: 'Folder name required' });
         
-        const newFolderPath = getSafePath(path.posix.join(currentPath || '', folderName));
-        if (!fs.existsSync(newFolderPath)) {
-            fs.mkdirSync(newFolderPath);
-            res.json({ message: 'Folder created!' });
-        } else {
-            res.status(400).json({ error: 'Folder already exists' });
-        }
-    } catch (error) {
-        res.status(400).json({ error: 'Invalid operation' });
-    }
-});
+        console.log(`📁 [NEW FOLDER] Creating virtual folder '${folderName}' inside '${currentPath || 'Home'}'`);
 
-// 5. DELETE FILE OR FOLDER
-app.delete('/api/delete', (req, res) => {
-    try {
-        const targetPath = getSafePath(req.body.path);
-        if (targetPath === uploadDir) return res.status(400).json({ error: 'Cannot delete root directory' });
-
-        if (fs.existsSync(targetPath)) {
-            fs.rmSync(targetPath, { recursive: true, force: true });
-        }
-        res.json({ message: 'Deleted successfully' });
-    } catch (error) {
-        res.status(400).json({ error: 'Failed to delete' });
-    }
-});
-
-// 6. DOWNLOAD FILE
-app.get('/api/download', (req, res) => {
-    try {
-        const targetPath = getSafePath(req.query.path);
-        if (fs.statSync(targetPath).isDirectory()) {
-            return res.status(400).json({ error: 'Cannot download whole folders yet' });
-        }
-        res.download(targetPath);
-    } catch (error) {
-        res.status(400).json({ error: 'File not found' });
-    }
-});
-
-// 7. GET RECENT FILES GLOBALLY (New feature)
-app.get('/api/recent', (req, res) => {
-    const getAllFiles = (dir, basePath = '') => {
-        if (!fs.existsSync(dir)) return [];
-        let results = [];
-        const items = fs.readdirSync(dir);
+        const check = await pool.query(
+            `SELECT id FROM files WHERE name = $1 AND folder_path = $2 AND is_directory = true AND in_trash = false`,
+            [folderName, currentPath || '']
+        );
         
-        for (const item of items) {
-            const fullPath = path.join(dir, item);
-            const relativePath = path.posix.join(basePath, item);
-            const stats = fs.statSync(fullPath);
-            
-            if (stats.isDirectory()) {
-                results = results.concat(getAllFiles(fullPath, relativePath));
-            } else {
-                results.push({
-                    name: item,
-                    size: stats.size,
-                    date: stats.mtime,
-                    isDirectory: false,
-                    path: relativePath
-                });
-            }
-        }
-        return results;
-    };
+        if (check.rows.length > 0) return res.status(400).json({ error: 'Folder already exists' });
 
-    try {
-        let allFiles = getAllFiles(uploadDir);
-        // Sort by newest modification date
-        allFiles.sort((a, b) => b.date - a.date);
-        // Return only the top 5 most recent files
-        res.json(allFiles.slice(0, 5));
+        await pool.query(
+            `INSERT INTO files (name, folder_path, is_directory) VALUES ($1, $2, true)`,
+            [folderName, currentPath || '']
+        );
+        res.json({ message: 'Folder created in DB!' });
     } catch (error) {
+        console.error("❌ [FOLDER ERROR]", error);
+        res.status(500).json({ error: 'Failed to create folder' });
+    }
+});
+
+// 5. DELETE
+app.delete('/api/delete', async (req, res) => {
+    try {
+        const targetPath = req.body.path;
+        if (!targetPath) return res.status(400).json({ error: 'Path required' });
+
+        const parts = targetPath.split('/');
+        const name = parts.pop();
+        const folderPath = parts.join('/');
+
+        console.log(`🗑️ [TRASH] Moving '${name}' to the virtual trash bin.`);
+
+        await pool.query(
+            `UPDATE files SET in_trash = true 
+             WHERE (name = $1 AND folder_path = $2) OR folder_path LIKE $3`,
+            [name, folderPath, `${targetPath}/%`]
+        );
+
+        res.json({ message: 'Moved to trash' });
+    } catch (error) {
+        console.error("❌ [DELETE ERROR]", error);
+        res.status(500).json({ error: 'Failed to delete' });
+    }
+});
+
+// 6. DOWNLOAD
+app.get('/api/download', async (req, res) => {
+    try {
+        const targetPath = req.query.path;
+        const parts = targetPath.split('/');
+        const name = parts.pop();
+        const folderPath = parts.join('/');
+
+        const result = await pool.query(
+            `SELECT physical_name, is_directory FROM files WHERE name = $1 AND folder_path = $2 AND in_trash = false`,
+            [name, folderPath]
+        );
+
+        if (result.rows.length === 0) return res.status(404).json({ error: 'File not found' });
+        if (result.rows[0].is_directory) return res.status(400).json({ error: 'Cannot download folders' });
+
+        const physicalPath = path.join(uploadDir, result.rows[0].physical_name);
+        res.download(physicalPath, name); 
+    } catch (error) {
+        console.error("❌ [DOWNLOAD ERROR]", error);
+        res.status(500).json({ error: 'Download failed' });
+    }
+});
+
+// 7. RECENT
+app.get('/api/recent', async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT * FROM files WHERE is_directory = false AND in_trash = false ORDER BY created_at DESC LIMIT 5`
+        );
+        
+        const fileData = result.rows.map(row => ({
+            name: row.name,
+            size: parseInt(row.size),
+            date: row.created_at,
+            isDirectory: false,
+            path: row.folder_path === '' ? row.name : `${row.folder_path}/${row.name}`
+        }));
+        
+        res.json(fileData);
+    } catch (error) {
+        console.error("❌ [RECENT ERROR]", error);
         res.status(500).json({ error: 'Failed to fetch recent files' });
     }
 });
 
-// START SERVER
 app.listen(PORT, () => {
     console.log(`🚀 Storage Engine running on http://localhost:${PORT}`);
 });
