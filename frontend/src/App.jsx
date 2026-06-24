@@ -1,7 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { UploadCloud, File as FileIcon, Folder, HardDrive, Download, Trash2, Clock, FolderPlus, ChevronRight, ChevronDown, MoreVertical, X, Edit2, Zap } from 'lucide-react';
+import { UploadCloud, File as FileIcon, Folder, HardDrive, Download, Trash2, Clock, FolderPlus, ChevronRight, ChevronDown, MoreVertical, X, Edit2, Zap, Maximize } from 'lucide-react';
 
 const API_BASE = `http://${window.location.hostname}:3001`;
+
+// --- HELPER: FILE TYPE DETECTION ---
+const getFileType = (filename) => {
+  const ext = filename.split('.').pop().toLowerCase();
+  if (['mp4', 'webm', 'ogg', 'mov'].includes(ext)) return 'video';
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext)) return 'image';
+  if (['pdf'].includes(ext)) return 'pdf';
+  return 'unknown';
+};
 
 // --- SUB-COMPONENT: Recursive Folder Tree ---
 const FolderTreeItem = ({ item, currentPath, setCurrentPath }) => {
@@ -64,6 +73,9 @@ export default function App() {
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [contextMenu, setContextMenu] = useState({ show: false, x: 0, y: 0, item: null });
+  
+  // NEW STATE: Tracks which file is currently open in the media player
+  const [viewingFile, setViewingFile] = useState(null); 
   
   const fileInputRef = useRef(null);
 
@@ -139,6 +151,7 @@ export default function App() {
       if (currentPath === targetPath || currentPath.startsWith(targetPath + '/')) {
         setCurrentPath('');
       }
+      if (viewingFile?.path === targetPath) setViewingFile(null); // Close viewer if deleted
     } catch (error) { console.error("Failed to delete", error); }
   };
 
@@ -202,6 +215,54 @@ export default function App() {
   return (
     <div className="flex h-screen bg-neutral-900 text-neutral-100 font-sans overflow-hidden relative">
       
+      {/* 🎬 FILE VIEWER OVERLAY */}
+      {viewingFile && (
+        <div className="absolute inset-0 z-[60] bg-black/95 flex flex-col backdrop-blur-md">
+          {/* Header */}
+          <div className="h-16 flex items-center justify-between px-6 border-b border-neutral-800/50 flex-shrink-0 bg-neutral-950/50">
+            <div className="flex items-center gap-3 overflow-hidden">
+              <FileIcon className="text-blue-500" size={20} />
+              <span className="font-medium truncate">{viewingFile.name}</span>
+              <span className="text-xs text-neutral-500 bg-neutral-800 px-2 py-0.5 rounded-full">{formatBytes(viewingFile.size)}</span>
+            </div>
+            <div className="flex items-center gap-4">
+              <button onClick={() => handleDownload(viewingFile.path)} className="text-neutral-400 hover:text-white flex items-center gap-2 text-sm bg-neutral-800 px-3 py-1.5 rounded-lg transition-colors">
+                <Download size={16} /> Download
+              </button>
+              <div className="w-px h-6 bg-neutral-800"></div>
+              <button onClick={() => setViewingFile(null)} className="text-neutral-400 hover:text-red-400 bg-neutral-900 hover:bg-red-500/10 p-2 rounded-lg transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+          </div>
+          
+          {/* Content Area */}
+          <div className="flex-1 flex items-center justify-center p-6 overflow-hidden">
+            {getFileType(viewingFile.name) === 'image' && (
+              <img src={`${API_BASE}/api/view?path=${encodeURIComponent(viewingFile.path)}`} className="max-w-full max-h-full object-contain drop-shadow-2xl rounded-sm" alt="Preview" />
+            )}
+            
+            {getFileType(viewingFile.name) === 'video' && (
+              <video src={`${API_BASE}/api/view?path=${encodeURIComponent(viewingFile.path)}`} controls autoPlay className="max-w-full max-h-full rounded-lg shadow-2xl outline-none bg-black">
+                Your browser does not support HTML video.
+              </video>
+            )}
+
+            {getFileType(viewingFile.name) === 'pdf' && (
+              <iframe src={`${API_BASE}/api/view?path=${encodeURIComponent(viewingFile.path)}`} className="w-full h-full rounded-lg shadow-2xl bg-white" title="PDF Preview" />
+            )}
+
+            {getFileType(viewingFile.name) === 'unknown' && (
+              <div className="flex flex-col items-center gap-4 text-neutral-500">
+                <Maximize size={48} className="text-neutral-700" />
+                <p>Preview not available for this file type.</p>
+                <button onClick={() => handleDownload(viewingFile.path)} className="mt-2 text-blue-400 hover:text-blue-300 underline">Download to view</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* MODAL */}
       {showFolderModal && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -242,12 +303,20 @@ export default function App() {
              </button>
           )}
           {!contextMenu.item?.isDirectory && (
-            <button 
-              className="w-full text-left px-4 py-2 hover:bg-blue-500/10 hover:text-blue-400 flex items-center gap-3 transition-colors"
-              onClick={() => handleDownload(contextMenu.item.path)}
-            >
-              <Download size={16} /> Download
-            </button>
+            <>
+              <button 
+                className="w-full text-left px-4 py-2 hover:bg-blue-500/10 hover:text-blue-400 flex items-center gap-3 transition-colors"
+                onClick={() => setViewingFile(contextMenu.item)}
+              >
+                <Maximize size={16} /> View
+              </button>
+              <button 
+                className="w-full text-left px-4 py-2 hover:bg-blue-500/10 hover:text-blue-400 flex items-center gap-3 transition-colors"
+                onClick={() => handleDownload(contextMenu.item.path)}
+              >
+                <Download size={16} /> Download
+              </button>
+            </>
           )}
           <button className="w-full text-left px-4 py-2 text-neutral-500 flex items-center gap-3 cursor-not-allowed" title="Requires Database">
             <Edit2 size={16} /> Rename
@@ -325,7 +394,7 @@ export default function App() {
         <div className={`flex-1 overflow-y-auto p-8 transition-colors ${dragActive ? 'bg-blue-500/5' : ''}`} onDragEnter={handleDrag} onDragLeave={handleDrag} onDragOver={handleDrag} onDrop={handleDrop}>
           <input ref={fileInputRef} type="file" className="hidden" onChange={handleChange} />
 
-          {/* RECENT FILES (Only shown in Root view) */}
+          {/* RECENT FILES */}
           {currentPath === '' && recentFiles.length > 0 && (
             <div className="mb-10">
               <h2 className="text-sm font-semibold text-neutral-400 mb-4 tracking-wider uppercase flex items-center gap-2">
@@ -334,7 +403,7 @@ export default function App() {
               <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden shadow-sm">
                 <div className="divide-y divide-neutral-800">
                   {recentFiles.map((file, idx) => (
-                    <div key={`recent-${idx}`} onContextMenu={(e) => handleContextMenu(e, file)} className="grid grid-cols-12 gap-4 p-4 items-center group transition-colors hover:bg-neutral-800/30">
+                    <div key={`recent-${idx}`} onClick={() => setViewingFile(file)} onContextMenu={(e) => handleContextMenu(e, file)} className="grid grid-cols-12 gap-4 p-4 items-center group transition-colors hover:bg-neutral-800/30 cursor-pointer">
                       <div className="col-span-7 flex items-center gap-3 overflow-hidden">
                         <FileIcon className="text-blue-500 flex-shrink-0" size={20} />
                         <div className="flex flex-col">
@@ -390,7 +459,7 @@ export default function App() {
                 </div>
                 <div className="divide-y divide-neutral-800">
                   {filesList.map((file, idx) => (
-                    <div key={idx} onContextMenu={(e) => handleContextMenu(e, file)} className="grid grid-cols-12 gap-4 p-4 items-center group transition-colors hover:bg-neutral-800/30">
+                    <div key={idx} onClick={() => setViewingFile(file)} onContextMenu={(e) => handleContextMenu(e, file)} className="grid grid-cols-12 gap-4 p-4 items-center group transition-colors hover:bg-neutral-800/30 cursor-pointer">
                       <div className="col-span-7 flex items-center gap-3 overflow-hidden">
                         <FileIcon className="text-neutral-500 flex-shrink-0" size={20} />
                         <span className="truncate text-sm font-medium text-neutral-200 group-hover:text-white transition-colors">{file.name.replace(/^\d+-/, '')}</span>

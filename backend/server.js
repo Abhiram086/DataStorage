@@ -11,8 +11,7 @@ const PORT = 3001;
 app.use(cors());
 app.use(express.json());
 
-// 🚦 NEW: GLOBAL TRAFFIC LOGGER
-// This will intercept EVERY request and print it, so we know if React is actually sending it!
+// GLOBAL TRAFFIC LOGGER
 app.use((req, res, next) => {
     console.log(`➡️  [${req.method}] ${req.url}`);
     next();
@@ -203,6 +202,34 @@ app.get('/api/recent', async (req, res) => {
     } catch (error) {
         console.error("❌ [RECENT ERROR]", error);
         res.status(500).json({ error: 'Failed to fetch recent files' });
+    }
+});
+
+// 8. NEW: VIEW ENDPOINT (Streams raw data for the browser player)
+app.get('/api/view', async (req, res) => {
+    try {
+        const targetPath = req.query.path;
+        const parts = targetPath.split('/');
+        const name = parts.pop();
+        const folderPath = parts.join('/');
+
+        const result = await pool.query(
+            `SELECT physical_name, is_directory FROM files WHERE name = $1 AND folder_path = $2 AND in_trash = false`,
+            [name, folderPath]
+        );
+
+        if (result.rows.length === 0) return res.status(404).json({ error: 'File not found' });
+        if (result.rows[0].is_directory) return res.status(400).json({ error: 'Cannot view folders' });
+
+        console.log(`👁️ [VIEW] Streaming '${name}' to the browser player.`);
+
+        const physicalPath = path.join(uploadDir, result.rows[0].physical_name);
+        
+        // sendFile automatically handles the correct video streaming ranges and image headers!
+        res.sendFile(physicalPath); 
+    } catch (error) {
+        console.error("❌ [VIEW ERROR]", error);
+        res.status(500).json({ error: 'View failed' });
     }
 });
 
