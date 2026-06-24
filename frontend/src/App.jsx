@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UploadCloud, File as FileIcon, Folder, HardDrive, Download, Trash2, Clock, FolderPlus, ChevronRight, ChevronDown, MoreVertical, X, Edit2, Zap } from 'lucide-react';
-// Add this right under your imports
+
 const API_BASE = `http://${window.location.hostname}:3001`;
+
 // --- SUB-COMPONENT: Recursive Folder Tree ---
 const FolderTreeItem = ({ item, currentPath, setCurrentPath }) => {
   const isSelected = currentPath === item.path;
@@ -87,7 +88,7 @@ export default function App() {
 
   const fetchTree = async () => {
     try {
-      const response = await fetch('${API_BASE}/api/tree');
+      const response = await fetch(`${API_BASE}/api/tree`);
       if (response.ok) {
         const data = await response.json();
         setTree(data[0]?.children || []);
@@ -97,7 +98,7 @@ export default function App() {
 
   const fetchRecent = async () => {
     try {
-      const response = await fetch('${API_BASE}/api/recent');
+      const response = await fetch(`${API_BASE}/api/recent`);
       if (response.ok) setRecentFiles(await response.json());
     } catch (error) { console.error("Failed to fetch recent files", error); }
   };
@@ -107,7 +108,7 @@ export default function App() {
     if (!newFolderName.trim()) return;
 
     try {
-      const response = await fetch('${API_BASE}/api/folder', {
+      const response = await fetch(`${API_BASE}/api/folder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ currentPath, folderName: newFolderName.trim() })
@@ -127,7 +128,7 @@ export default function App() {
   const handleDelete = async (targetPath) => {
     if (!window.confirm("Are you sure you want to delete this?")) return;
     try {
-      await fetch('${API_BASE}/api/delete', {
+      await fetch(`${API_BASE}/api/delete`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: targetPath })
@@ -152,7 +153,7 @@ export default function App() {
     formData.append('file', file);
 
     try {
-      const response = await fetch('${API_BASE}/api/upload', {
+      const response = await fetch(`${API_BASE}/api/upload`, {
         method: 'POST',
         body: formData,
       });
